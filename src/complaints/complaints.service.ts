@@ -14,15 +14,15 @@ import { CreateComplaintDto } from './dto/create-complaint.dto';
 import { QueryComplaintDto } from './dto/query-complaint.dto';
 import { UpdateComplaintDto } from './dto/update-complaint.dto';
 import { ComplaintLogsService } from 'src/complaint-logs/complaint-logs.service';
-import { NotificationsService } from 'src/notifications/notifications.service'; // ✅ جديد
-import { NotificationType } from 'src/notifications/schemas/notification.schema'; // ✅ جديد
+import { NotificationsService } from 'src/notifications/notifications.service';
+import { NotificationType } from 'src/notifications/schemas/notification.schema';
 
 @Injectable()
 export class ComplaintsService {
   constructor(
     @InjectModel(Complaint.name) private complaintModel: Model<Complaint>,
     private readonly complaintLogsService: ComplaintLogsService,
-    private readonly notificationsService: NotificationsService, // ✅ جديد
+    private readonly notificationsService: NotificationsService,
   ) { }
 
   // ================ CREATE COMPLAINT ================
@@ -44,7 +44,7 @@ export class ComplaintsService {
       isRead: false,
     });
 
-    // ✅ إشعار تلقائي: عند إنشاء شكوى جديدة
+    // إشعار تلقائي: عند إنشاء شكوى جديدة
     try {
       await this.notificationsService.createAutoNotification(
         userId,
@@ -251,7 +251,7 @@ export class ComplaintsService {
       throw new NotFoundException('الشكوى غير موجودة');
     }
 
-    const oldStatus = complaint.status; // ✅ لتوثيق الحالة السابقة
+    const oldStatus = complaint.status;
     complaint.status = newStatus;
 
     if (newStatus === ComplaintStatus.RESOLVED && !complaint.resolvedAt) {
@@ -263,7 +263,7 @@ export class ComplaintsService {
 
     await complaint.save();
 
-    // ✅ تسجيل العملية تلقائياً في ComplaintLogs
+    // تسجيل العملية تلقائياً في ComplaintLogs
     try {
       await this.complaintLogsService.createAutoLog(
         complaintId,
@@ -275,7 +275,7 @@ export class ComplaintsService {
       console.error('فشل تسجيل السجل التلقائي:', error.message);
     }
 
-    // ✅ إشعار تلقائي عند تغيير الحالة
+    // إشعار تلقائي عند تغيير الحالة
     try {
       await this.notificationsService.createAutoNotification(
         complaint.userId.toString(),
@@ -319,7 +319,7 @@ export class ComplaintsService {
 
     await complaint.save();
 
-    // ✅ سجل التعيين
+    // سجل التعيين
     try {
       await this.complaintLogsService.createAutoLog(
         complaintId,
@@ -331,7 +331,7 @@ export class ComplaintsService {
       console.error('فشل تسجيل سجل التعيين:', error.message);
     }
 
-    // ✅ إشعار تلقائي
+    // إشعار تلقائي
     try {
       await this.notificationsService.createAutoNotification(
         complaint.userId.toString(),
@@ -367,7 +367,7 @@ export class ComplaintsService {
     complaint.images.push(...filenames);
     await complaint.save();
 
-    // ✅ سجل رفع الصور
+    // سجل رفع الصور
     try {
       await this.complaintLogsService.createAutoLog(
         complaintId,
@@ -379,7 +379,7 @@ export class ComplaintsService {
       console.error('فشل تسجيل سجل رفع الصور:', error.message);
     }
 
-    // ✅ إشعار تلقائي
+    // إشعار تلقائي
     try {
       await this.notificationsService.createAutoNotification(
         complaint.userId.toString(),
@@ -546,14 +546,24 @@ export class ComplaintsService {
     }));
   }
 
-  // ================ HELPER: Check Access ================
+  // ================ HELPER: Check Access (FIXED) ================
   private checkAccess(complaint: Complaint, currentUser: User): void {
-    if (currentUser.userType === UserType.ADMIN) {
-      return;
-    }
-
-    if (complaint.userId.toString() !== currentUser._id.toString()) {
-      throw new ForbiddenException('ليس لديك صلاحية للوصول لهذه الشكوى');
-    }
+  // الأدمن يقدر يوصل لكل الشكاوى
+  if (currentUser.userType === UserType.ADMIN) {
+    return;
   }
+
+  // استخراج الـ userId من الشكوى
+  const complaintUserId = (complaint.userId as any)?._id?.toString() 
+    || (complaint.userId as any)?.toString() 
+    || '';
+
+  // استخراج الـ userId من المستخدم الحالي
+  const currentUserId = (currentUser._id as any)?.toString() || '';
+
+  // المقارنة
+  if (complaintUserId !== currentUserId) {
+    throw new ForbiddenException('ليس لديك صلاحية للوصول لهذه الشكوى');
+  }
+}
 }

@@ -30,7 +30,7 @@ import { UpdateComplaintDto } from './dto/update-complaint.dto';
 import { AssignComplaintDto, UpdateStatusDto } from './dto/update-status.dto';
 
 @Controller('complaints')
-//@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
 export class ComplaintsController {
   constructor(private readonly complaintsService: ComplaintsService) { }
 
