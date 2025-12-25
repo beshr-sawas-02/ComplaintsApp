@@ -94,15 +94,15 @@ export class UserService {
   }
 
   // ================ READ ONE ================
-  async findOne(id: string): Promise<User> {
-    const user = await this.userModel.findById(id).select('-password').exec();
+  async findOne(id: string): Promise<any> {
+  const user = await this.userModel.findById(id).select('-password').exec();
 
-    if (!user) {
-      throw new NotFoundException('المستخدم غير موجود');
-    }
-
-    return user;
+  if (!user) {
+    throw new NotFoundException('المستخدم غير موجود');
   }
+
+  return this.sanitizeUser(user);  // ✅ أضف هذا
+}
 
   // ================ READ BY RATIONAL ID ================
   async findByRationalId(rationalId: string): Promise<User> {
@@ -119,30 +119,30 @@ export class UserService {
   }
 
   // ================ UPDATE ================
-  async update(id: string, updateUserDto: UpdateUserDto): Promise<User> {
-    const user = await this.userModel.findById(id);
+  async update(id: string, updateUserDto: UpdateUserDto): Promise<any> {
+  const user = await this.userModel.findById(id);
 
-    if (!user) {
-      throw new NotFoundException('المستخدم غير موجود');
-    }
-
-    const { newPassword, ...updateData } = updateUserDto;
-
-    if (newPassword) {
-      updateData['password'] = await bcrypt.hash(newPassword, 10);
-    }
-
-    const updatedUser = await this.userModel
-      .findByIdAndUpdate(id, updateData, { new: true })
-      .select('-password')
-      .exec();
-
-    if (!updatedUser) {
-      throw new NotFoundException('المستخدم غير موجود بعد التحديث');
-    }
-
-    return updatedUser;
+  if (!user) {
+    throw new NotFoundException('المستخدم غير موجود');
   }
+
+  const { newPassword, ...updateData } = updateUserDto;
+
+  if (newPassword) {
+    updateData['password'] = await bcrypt.hash(newPassword, 10);
+  }
+
+  const updatedUser = await this.userModel
+    .findByIdAndUpdate(id, updateData, { new: true })
+    .select('-password')
+    .exec();
+
+  if (!updatedUser) {
+    throw new NotFoundException('المستخدم غير موجود بعد التحديث');
+  }
+
+  return this.sanitizeUser(updatedUser);  // ✅ أضف هذا
+}
 
   // 🔴 ================ UPDATE PROFILE IMAGE ================
   async updateProfileImage(userId: string, filename: string): Promise<User> {
