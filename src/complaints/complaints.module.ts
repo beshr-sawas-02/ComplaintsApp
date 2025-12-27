@@ -7,6 +7,7 @@ import { Complaint, ComplaintSchema } from './schemas/complaint.schema';
 // ✅ أضف هذا السطر
 import { ComplaintLogsModule } from '../complaint-logs/complaint-logs.module';
 import { NotificationsModule } from 'src/notifications/notifications.module';
+import { CloudinaryService } from 'src/config/cloudinary.service';
 
 @Module({
   imports: [
@@ -17,7 +18,7 @@ import { NotificationsModule } from 'src/notifications/notifications.module';
     NotificationsModule, 
   ],
   controllers: [ComplaintsController],
-  providers: [ComplaintsService],
+  providers: [ComplaintsService,CloudinaryService],
   exports: [ComplaintsService],
 })
 export class ComplaintsModule {}

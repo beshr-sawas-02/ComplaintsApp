@@ -2,20 +2,23 @@ import {
   Injectable,
   NotFoundException,
   ForbiddenException,
-  BadRequestException
+  BadRequestException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { Complaint, ComplaintStatus, ComplaintPriority } from './schemas/complaint.schema';
+import {
+  Complaint,
+  ComplaintStatus,
+  ComplaintPriority,
+} from './schemas/complaint.schema';
 import { User, UserType } from '../users/schemas/user.schema';
-import * as fs from 'fs';
-import * as path from 'path';
 import { CreateComplaintDto } from './dto/create-complaint.dto';
 import { QueryComplaintDto } from './dto/query-complaint.dto';
 import { UpdateComplaintDto } from './dto/update-complaint.dto';
 import { ComplaintLogsService } from 'src/complaint-logs/complaint-logs.service';
 import { NotificationsService } from 'src/notifications/notifications.service';
 import { NotificationType } from 'src/notifications/schemas/notification.schema';
+import { CloudinaryService } from '../config/cloudinary.service';
 
 @Injectable()
 export class ComplaintsService {
@@ -23,7 +26,8 @@ export class ComplaintsService {
     @InjectModel(Complaint.name) private complaintModel: Model<Complaint>,
     private readonly complaintLogsService: ComplaintLogsService,
     private readonly notificationsService: NotificationsService,
-  ) { }
+    private readonly cloudinaryService: CloudinaryService, // ✅ إضافة Cloudinary
+  ) {}
 
   // ================ CREATE COMPLAINT ================
   async create(
@@ -71,7 +75,7 @@ export class ComplaintsService {
       page = 1,
       limit = 10,
       sortBy = 'createdAt',
-      sortOrder = 'desc'
+      sortOrder = 'desc',
     } = queryDto;
 
     const query: any = {};
@@ -171,7 +175,7 @@ export class ComplaintsService {
       page = 1,
       limit = 10,
       sortBy = 'createdAt',
-      sortOrder = 'desc'
+      sortOrder = 'desc',
     } = queryDto;
 
     if (status) query.status = status;
@@ -218,7 +222,9 @@ export class ComplaintsService {
     this.checkAccess(complaint, currentUser);
 
     if (updateComplaintDto.categoryId) {
-      (updateComplaintDto as any).categoryId = new Types.ObjectId(updateComplaintDto.categoryId);
+      (updateComplaintDto as any).categoryId = new Types.ObjectId(
+        updateComplaintDto.categoryId,
+      );
     }
 
     const updatedComplaint = await this.complaintModel
@@ -269,7 +275,7 @@ export class ComplaintsService {
         complaintId,
         currentUser._id.toString(),
         'status_change',
-        `تم تغيير حالة الشكوى إلى ${newStatus}`
+        `تم تغيير حالة الشكوى إلى ${newStatus}`,
       );
     } catch (error) {
       console.error('فشل تسجيل السجل التلقائي:', error.message);
@@ -287,7 +293,7 @@ export class ComplaintsService {
           newStatus,
           assignedTo: currentUser._id.toString(),
           note,
-        }
+        },
       );
     } catch (error) {
       console.error('فشل إنشاء إشعار تحديث الحالة:', error.message);
@@ -325,7 +331,7 @@ export class ComplaintsService {
         complaintId,
         currentUser._id.toString(),
         'assignment',
-        `تم تعيين الشكوى إلى المسؤول ذو المعرف ${adminId}`
+        `تم تعيين الشكوى إلى المسؤول ذو المعرف ${adminId}`,
       );
     } catch (error) {
       console.error('فشل تسجيل سجل التعيين:', error.message);
@@ -342,7 +348,7 @@ export class ComplaintsService {
           assignedTo: adminId,
           oldStatus: ComplaintStatus.PENDING,
           newStatus: ComplaintStatus.IN_PROGRESS,
-        }
+        },
       );
     } catch (error) {
       console.error('فشل إنشاء إشعار التعيين:', error.message);
@@ -351,10 +357,10 @@ export class ComplaintsService {
     return this.populateComplaint(complaint);
   }
 
-  // ================ UPLOAD IMAGES ================
-  async uploadImages(
+  // ================ UPLOAD IMAGES TO CLOUDINARY ================
+  async uploadImagesToCloudinary(
     complaintId: string,
-    filenames: string[],
+    files: Express.Multer.File[],
     currentUser: User,
   ): Promise<Complaint> {
     const complaint = await this.complaintModel.findById(complaintId);
@@ -364,7 +370,15 @@ export class ComplaintsService {
 
     this.checkAccess(complaint, currentUser);
 
-    complaint.images.push(...filenames);
+    // ✅ رفع الصور إلى Cloudinary
+    const uploadResults = await this.cloudinaryService.uploadImages(
+      files,
+      `complaints/${complaintId}`,
+    );
+
+    // ✅ حفظ URLs الصور في قاعدة البيانات
+    const imageUrls = uploadResults.map((result) => result.secure_url);
+    complaint.images.push(...imageUrls);
     await complaint.save();
 
     // سجل رفع الصور
@@ -373,7 +387,7 @@ export class ComplaintsService {
         complaintId,
         currentUser._id.toString(),
         'upload_images',
-        `تمت إضافة ${filenames.length} صورة جديدة للشكوى`
+        `تمت إضافة ${files.length} صورة جديدة للشكوى`,
       );
     } catch (error) {
       console.error('فشل تسجيل سجل رفع الصور:', error.message);
@@ -385,7 +399,7 @@ export class ComplaintsService {
         complaint.userId.toString(),
         complaint._id.toString(),
         NotificationType.NEW_COMMENT,
-        `تمت إضافة ${filenames.length} صورة جديدة إلى الشكوى.`,
+        `تمت إضافة ${files.length} صورة جديدة إلى الشكوى.`,
       );
     } catch (error) {
       console.error('فشل إنشاء إشعار رفع الصور:', error.message);
@@ -394,10 +408,10 @@ export class ComplaintsService {
     return this.populateComplaint(complaint);
   }
 
-  // ================ DELETE IMAGE ================
+  // ================ DELETE IMAGE (Cloudinary) ================
   async deleteImage(
     complaintId: string,
-    filename: string,
+    imageUrl: string,
     currentUser: User,
   ): Promise<Complaint> {
     const complaint = await this.complaintModel.findById(complaintId);
@@ -407,17 +421,16 @@ export class ComplaintsService {
 
     this.checkAccess(complaint, currentUser);
 
-    const imagePath = path.join(process.cwd(), 'uploads', 'complaints', filename);
-
-    if (fs.existsSync(imagePath)) {
-      try {
-        fs.unlinkSync(imagePath);
-      } catch (error) {
-        console.error('خطأ في حذف الصورة:', error);
-      }
+    // ✅ حذف الصورة من Cloudinary
+    try {
+      const publicId = this.cloudinaryService.extractPublicId(imageUrl);
+      await this.cloudinaryService.deleteImage(publicId);
+    } catch (error) {
+      console.error('خطأ في حذف الصورة من Cloudinary:', error);
     }
 
-    complaint.images = complaint.images.filter(img => img !== filename);
+    // حذف URL الصورة من قاعدة البيانات
+    complaint.images = complaint.images.filter((img) => img !== imageUrl);
     await complaint.save();
 
     return this.populateComplaint(complaint);
@@ -452,14 +465,13 @@ export class ComplaintsService {
 
     this.checkAccess(complaint, currentUser);
 
-    for (const image of complaint.images) {
-      const imagePath = path.join(process.cwd(), 'uploads', 'complaints', image);
-      if (fs.existsSync(imagePath)) {
-        try {
-          fs.unlinkSync(imagePath);
-        } catch (error) {
-          console.error('خطأ في حذف الصورة:', error);
-        }
+    // ✅ حذف جميع الصور من Cloudinary
+    for (const imageUrl of complaint.images) {
+      try {
+        const publicId = this.cloudinaryService.extractPublicId(imageUrl);
+        await this.cloudinaryService.deleteImage(publicId);
+      } catch (error) {
+        console.error('خطأ في حذف الصورة:', error);
       }
     }
 
@@ -476,23 +488,19 @@ export class ComplaintsService {
       query.userId = currentUser._id;
     }
 
-    const [
-      totalComplaints,
-      byStatus,
-      byPriority,
-      unreadCount,
-    ] = await Promise.all([
-      this.complaintModel.countDocuments(query),
-      this.complaintModel.aggregate([
-        { $match: query },
-        { $group: { _id: '$status', count: { $sum: 1 } } },
-      ]),
-      this.complaintModel.aggregate([
-        { $match: query },
-        { $group: { _id: '$priority', count: { $sum: 1 } } },
-      ]),
-      this.complaintModel.countDocuments({ ...query, isRead: false }),
-    ]);
+    const [totalComplaints, byStatus, byPriority, unreadCount] =
+      await Promise.all([
+        this.complaintModel.countDocuments(query),
+        this.complaintModel.aggregate([
+          { $match: query },
+          { $group: { _id: '$status', count: { $sum: 1 } } },
+        ]),
+        this.complaintModel.aggregate([
+          { $match: query },
+          { $group: { _id: '$priority', count: { $sum: 1 } } },
+        ]),
+        this.complaintModel.countDocuments({ ...query, isRead: false }),
+      ]);
 
     return {
       totalComplaints,
@@ -533,37 +541,54 @@ export class ComplaintsService {
     }
 
     const complaintObj: any = populated.toObject();
+
+    // ✅ الصور الآن URLs مباشرة من Cloudinary
     complaintObj.images = this.buildImageUrls(complaintObj.images || []);
 
     return complaintObj;
   }
 
-  private buildImageUrls(images: string[]): { fileName: string; fileUrl: string }[] {
-    const baseUrl = process.env.BASE_URL || 'http://localhost:3000';
-    return images.map((fileName) => ({
-      fileName,
-      fileUrl: `${baseUrl}/uploads/complaints/${fileName}`,
-    }));
+  private buildImageUrls(
+    images: string[],
+  ): { fileName: string; fileUrl: string }[] {
+    return images.map((url) => {
+      // إذا كانت الصورة URL كامل (Cloudinary)
+      if (url.startsWith('http')) {
+        const parts = url.split('/');
+        const fileName = parts[parts.length - 1];
+        return {
+          fileName,
+          fileUrl: url,
+        };
+      }
+      // إذا كانت الصورة اسم ملف قديم (للتوافق مع البيانات القديمة)
+      const baseUrl = process.env.BASE_URL || 'http://localhost:3000';
+      return {
+        fileName: url,
+        fileUrl: `${baseUrl}/uploads/complaints/${url}`,
+      };
+    });
   }
 
-  // ================ HELPER: Check Access (FIXED) ================
+  // ================ HELPER: Check Access ================
   private checkAccess(complaint: Complaint, currentUser: User): void {
-  // الأدمن يقدر يوصل لكل الشكاوى
-  if (currentUser.userType === UserType.ADMIN) {
-    return;
+    // الأدمن يقدر يوصل لكل الشكاوى
+    if (currentUser.userType === UserType.ADMIN) {
+      return;
+    }
+
+    // استخراج الـ userId من الشكوى
+    const complaintUserId =
+      (complaint.userId as any)?._id?.toString() ||
+      (complaint.userId as any)?.toString() ||
+      '';
+
+    // استخراج الـ userId من المستخدم الحالي
+    const currentUserId = (currentUser._id as any)?.toString() || '';
+
+    // المقارنة
+    if (complaintUserId !== currentUserId) {
+      throw new ForbiddenException('ليس لديك صلاحية للوصول لهذه الشكوى');
+    }
   }
-
-  // استخراج الـ userId من الشكوى
-  const complaintUserId = (complaint.userId as any)?._id?.toString() 
-    || (complaint.userId as any)?.toString() 
-    || '';
-
-  // استخراج الـ userId من المستخدم الحالي
-  const currentUserId = (currentUser._id as any)?.toString() || '';
-
-  // المقارنة
-  if (complaintUserId !== currentUserId) {
-    throw new ForbiddenException('ليس لديك صلاحية للوصول لهذه الشكوى');
-  }
-}
 }

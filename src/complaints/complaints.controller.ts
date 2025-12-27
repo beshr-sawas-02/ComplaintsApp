@@ -15,7 +15,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
-import { diskStorage } from 'multer';
+import { memoryStorage } from 'multer';
 import { extname } from 'path';
 import { ComplaintsService } from './complaints.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -32,11 +32,10 @@ import { AssignComplaintDto, UpdateStatusDto } from './dto/update-status.dto';
 @Controller('complaints')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class ComplaintsController {
-  constructor(private readonly complaintsService: ComplaintsService) { }
+  constructor(private readonly complaintsService: ComplaintsService) {}
 
   // ================ CREATE COMPLAINT ================
   @Post()
-  //@Roles(UserType.CITIZEN, UserType.ADMIN)
   create(
     @Body() createComplaintDto: CreateComplaintDto,
     @CurrentUser() user: User,
@@ -46,24 +45,18 @@ export class ComplaintsController {
 
   // ================ GET ALL COMPLAINTS ================
   @Get()
- // @Roles(UserType.CITIZEN, UserType.ADMIN)
-  findAll(
-    @Query() queryDto: QueryComplaintDto,
-    @CurrentUser() user: User,
-  ) {
+  findAll(@Query() queryDto: QueryComplaintDto, @CurrentUser() user: User) {
     return this.complaintsService.findAll(queryDto, user);
   }
 
   // ================ GET STATISTICS ================
   @Get('statistics')
- // @Roles(UserType.CITIZEN, UserType.ADMIN)
   getStatistics(@CurrentUser() user: User) {
     return this.complaintsService.getStatistics(user);
   }
 
   // ================ GET MY COMPLAINTS ================
   @Get('my-complaints')
- // @Roles(UserType.CITIZEN)
   getMyComplaints(
     @Query() queryDto: QueryComplaintDto,
     @CurrentUser() user: User,
@@ -73,17 +66,12 @@ export class ComplaintsController {
 
   // ================ GET ONE COMPLAINT ================
   @Get(':id')
- // @Roles(UserType.CITIZEN, UserType.ADMIN)
-  findOne(
-    @Param('id') id: string,
-    @CurrentUser() user: User,
-  ) {
+  findOne(@Param('id') id: string, @CurrentUser() user: User) {
     return this.complaintsService.findOne(id, user);
   }
 
   // ================ UPDATE COMPLAINT ================
   @Patch(':id')
- // @Roles(UserType.CITIZEN, UserType.ADMIN)
   update(
     @Param('id') id: string,
     @Body() updateComplaintDto: UpdateComplaintDto,
@@ -94,7 +82,6 @@ export class ComplaintsController {
 
   // ================ UPDATE STATUS (Admin) ================
   @Patch(':id/status')
- // @Roles(UserType.ADMIN)
   updateStatus(
     @Param('id') id: string,
     @Body() updateStatusDto: UpdateStatusDto,
@@ -110,7 +97,6 @@ export class ComplaintsController {
 
   // ================ ASSIGN COMPLAINT (Admin) ================
   @Patch(':id/assign')
- // @Roles(UserType.ADMIN)
   assignComplaint(
     @Param('id') id: string,
     @Body() assignDto: AssignComplaintDto,
@@ -119,31 +105,26 @@ export class ComplaintsController {
     return this.complaintsService.assignComplaint(id, assignDto.adminId, user);
   }
 
-  // ================ UPLOAD IMAGES (متعددة) ================
+  // ================ UPLOAD IMAGES (Cloudinary) ================
   @Post(':id/upload-images')
- // @Roles(UserType.CITIZEN, UserType.ADMIN)
   @UseInterceptors(
-    FilesInterceptor('images', 5, { // حد أقصى 5 صور
-      storage: diskStorage({
-        destination: './uploads/complaints',
-        filename: (req, file, cb) => {
-          const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
-          const ext = extname(file.originalname);
-          cb(null, `cmp-${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`);
-        },
-      }),
+    FilesInterceptor('images', 5, {
+      storage: memoryStorage(), // ✅ استخدام memory بدلاً من disk
       limits: {
         fileSize: 5 * 1024 * 1024, // 5MB
       },
       fileFilter: (req, file, cb) => {
         if (!/(jpg|jpeg|png|pdf)$/i.test(extname(file.originalname))) {
-          return cb(new Error('فقط الملفات من نوع JPG, JPEG, PNG, أو PDF مسموحة'), false);
+          return cb(
+            new Error('فقط الملفات من نوع JPG, JPEG, PNG, أو PDF مسموحة'),
+            false,
+          );
         }
         cb(null, true);
       },
     }),
   )
-  uploadImages(
+  async uploadImages(
     @Param('id') id: string,
     @UploadedFiles() files: Express.Multer.File[],
     @CurrentUser() user: User,
@@ -152,13 +133,12 @@ export class ComplaintsController {
       throw new BadRequestException('لم يتم رفع أي ملف');
     }
 
-    const filenames = files.map(file => file.filename);
-    return this.complaintsService.uploadImages(id, filenames, user);
+    // ✅ رفع الصور إلى Cloudinary
+    return this.complaintsService.uploadImagesToCloudinary(id, files, user);
   }
 
   // ================ DELETE IMAGE ================
   @Delete(':id/images/:filename')
- // @Roles(UserType.CITIZEN, UserType.ADMIN)
   deleteImage(
     @Param('id') id: string,
     @Param('filename') filename: string,
@@ -169,21 +149,13 @@ export class ComplaintsController {
 
   // ================ MARK AS READ (Admin) ================
   @Patch(':id/mark-read')
- // @Roles(UserType.ADMIN)
-  markAsRead(
-    @Param('id') id: string,
-    @CurrentUser() user: User,
-  ) {
+  markAsRead(@Param('id') id: string, @CurrentUser() user: User) {
     return this.complaintsService.markAsRead(id, user);
   }
 
   // ================ DELETE COMPLAINT ================
   @Delete(':id')
- // @Roles(UserType.CITIZEN, UserType.ADMIN)
-  remove(
-    @Param('id') id: string,
-    @CurrentUser() user: User,
-  ) {
+  remove(@Param('id') id: string, @CurrentUser() user: User) {
     return this.complaintsService.remove(id, user);
   }
 }
