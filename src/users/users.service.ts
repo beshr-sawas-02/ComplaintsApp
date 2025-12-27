@@ -12,13 +12,13 @@ import * as bcrypt from 'bcrypt';
 import { QueryUserDto } from './dto/query-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
-import * as fs from 'fs';
-import * as path from 'path';
+import { CloudinaryService } from '../config/cloudinary.service';
 
 @Injectable()
 export class UserService {
   constructor(
     @InjectModel(User.name) private userModel: Model<User>,
+    private readonly cloudinaryService: CloudinaryService, // ✅ إضافة Cloudinary
   ) {}
 
   // ================ CREATE ================
@@ -95,14 +95,14 @@ export class UserService {
 
   // ================ READ ONE ================
   async findOne(id: string): Promise<any> {
-  const user = await this.userModel.findById(id).select('-password').exec();
+    const user = await this.userModel.findById(id).select('-password').exec();
 
-  if (!user) {
-    throw new NotFoundException('المستخدم غير موجود');
+    if (!user) {
+      throw new NotFoundException('المستخدم غير موجود');
+    }
+
+    return this.sanitizeUser(user);
   }
-
-  return this.sanitizeUser(user);  // ✅ أضف هذا
-}
 
   // ================ READ BY RATIONAL ID ================
   async findByRationalId(rationalId: string): Promise<User> {
@@ -120,64 +120,65 @@ export class UserService {
 
   // ================ UPDATE ================
   async update(id: string, updateUserDto: UpdateUserDto): Promise<any> {
-  const user = await this.userModel.findById(id);
+    const user = await this.userModel.findById(id);
 
-  if (!user) {
-    throw new NotFoundException('المستخدم غير موجود');
+    if (!user) {
+      throw new NotFoundException('المستخدم غير موجود');
+    }
+
+    const { newPassword, ...updateData } = updateUserDto;
+
+    if (newPassword) {
+      updateData['password'] = await bcrypt.hash(newPassword, 10);
+    }
+
+    const updatedUser = await this.userModel
+      .findByIdAndUpdate(id, updateData, { new: true })
+      .select('-password')
+      .exec();
+
+    if (!updatedUser) {
+      throw new NotFoundException('المستخدم غير موجود بعد التحديث');
+    }
+
+    return this.sanitizeUser(updatedUser);
   }
 
-  const { newPassword, ...updateData } = updateUserDto;
-
-  if (newPassword) {
-    updateData['password'] = await bcrypt.hash(newPassword, 10);
-  }
-
-  const updatedUser = await this.userModel
-    .findByIdAndUpdate(id, updateData, { new: true })
-    .select('-password')
-    .exec();
-
-  if (!updatedUser) {
-    throw new NotFoundException('المستخدم غير موجود بعد التحديث');
-  }
-
-  return this.sanitizeUser(updatedUser);  // ✅ أضف هذا
-}
-
-  // 🔴 ================ UPDATE PROFILE IMAGE ================
-  async updateProfileImage(userId: string, filename: string): Promise<User> {
+  // ✅ ================ UPLOAD PROFILE IMAGE TO CLOUDINARY ================
+  async uploadProfileImageToCloudinary(
+    userId: string,
+    file: Express.Multer.File,
+  ): Promise<User> {
     const user = await this.userModel.findById(userId);
 
     if (!user) {
       throw new NotFoundException('المستخدم غير موجود');
     }
 
-    // حذف الصورة القديمة إذا كانت موجودة
-    if (user.profileImage) {
-      const oldImagePath = path.join(
-        process.cwd(),
-        'uploads',
-        'profiles',
-        user.profileImage,
-      );
-
-      if (fs.existsSync(oldImagePath)) {
-        try {
-          fs.unlinkSync(oldImagePath);
-        } catch (error) {
-          console.error('خطأ في حذف الصورة القديمة:', error);
-        }
+    // حذف الصورة القديمة من Cloudinary إذا كانت موجودة
+    if (user.profileImage && user.profileImage.startsWith('http')) {
+      try {
+        const publicId = this.cloudinaryService.extractPublicId(user.profileImage);
+        await this.cloudinaryService.deleteImage(publicId);
+      } catch (error) {
+        console.error('خطأ في حذف الصورة القديمة من Cloudinary:', error);
       }
     }
 
-    // تحديث بمسار الصورة الجديدة
-    user.profileImage = filename;
+    // ✅ رفع الصورة الجديدة إلى Cloudinary
+    const uploadResult = await this.cloudinaryService.uploadImage(
+      file,
+      `profiles/${userId}`,
+    );
+
+    // تحديث بـ URL الصورة الجديدة
+    user.profileImage = uploadResult.secure_url;
     await user.save();
 
     return this.sanitizeUser(user);
   }
 
-  // 🔴 ================ DELETE PROFILE IMAGE ================
+  // ✅ ================ DELETE PROFILE IMAGE (Cloudinary) ================
   async deleteProfileImage(userId: string): Promise<User> {
     const user = await this.userModel.findById(userId);
 
@@ -186,18 +187,13 @@ export class UserService {
     }
 
     if (user.profileImage) {
-      const imagePath = path.join(
-        process.cwd(),
-        'uploads',
-        'profiles',
-        user.profileImage,
-      );
-
-      if (fs.existsSync(imagePath)) {
+      // حذف من Cloudinary إذا كانت URL
+      if (user.profileImage.startsWith('http')) {
         try {
-          fs.unlinkSync(imagePath);
+          const publicId = this.cloudinaryService.extractPublicId(user.profileImage);
+          await this.cloudinaryService.deleteImage(publicId);
         } catch (error) {
-          console.error('خطأ في حذف الصورة:', error);
+          console.error('خطأ في حذف الصورة من Cloudinary:', error);
         }
       }
 
@@ -271,21 +267,13 @@ export class UserService {
       throw new NotFoundException('المستخدم غير موجود');
     }
 
-    // حذف الصورة الشخصية إذا كانت موجودة
-    if (user.profileImage) {
-      const imagePath = path.join(
-        process.cwd(),
-        'uploads',
-        'profiles',
-        user.profileImage,
-      );
-
-      if (fs.existsSync(imagePath)) {
-        try {
-          fs.unlinkSync(imagePath);
-        } catch (error) {
-          console.error('خطأ في حذف الصورة:', error);
-        }
+    // ✅ حذف الصورة من Cloudinary
+    if (user.profileImage && user.profileImage.startsWith('http')) {
+      try {
+        const publicId = this.cloudinaryService.extractPublicId(user.profileImage);
+        await this.cloudinaryService.deleteImage(publicId);
+      } catch (error) {
+        console.error('خطأ في حذف الصورة:', error);
       }
     }
 
@@ -293,13 +281,6 @@ export class UserService {
 
     return { message: 'تم حذف المستخدم نهائياً' };
   }
-
-  private getProfileImageUrl(profileImage: string | null): string | null {
-  if (!profileImage) return null;
-  const baseUrl = process.env.BASE_URL || 'http://localhost:3000';
-  return `${baseUrl}/uploads/profiles/${profileImage}`;
-}
-
 
   // ================ GET STATISTICS ================
   async getStatistics() {
@@ -321,15 +302,28 @@ export class UserService {
     };
   }
 
-  // ================ HELPER ================
+  // ================ HELPER: Get Profile Image URL ================
+  private getProfileImageUrl(profileImage: string | null): string | null {
+    if (!profileImage) return null;
+
+    // ✅ إذا كانت URL كاملة (Cloudinary)، أرجعها مباشرة
+    if (profileImage.startsWith('http')) {
+      return profileImage;
+    }
+
+    // للتوافق مع البيانات القديمة
+    const baseUrl = process.env.BASE_URL || 'http://localhost:3000';
+    return `${baseUrl}/uploads/profiles/${profileImage}`;
+  }
+
+  // ================ HELPER: Sanitize User ================
   private sanitizeUser(user: UserDocument): any {
-  const userObject = user.toObject();
-  delete userObject.password;
+    const userObject = user.toObject();
+    delete userObject.password;
 
-  // ✅ أضف رابط الصورة الكامل
-  userObject.profileImageUrl = this.getProfileImageUrl(userObject.profileImage);
+    // ✅ أضف رابط الصورة الكامل
+    userObject.profileImageUrl = this.getProfileImageUrl(userObject.profileImage);
 
-  return userObject;
-}
-
+    return userObject;
+  }
 }

@@ -13,8 +13,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { diskStorage } from 'multer';
-import { extname } from 'path';
+import { memoryStorage } from 'multer';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -65,18 +64,11 @@ export class UserController {
     return this.userService.findByRationalId(rationalId);
   }
 
-  // 🔴 ================ UPLOAD PROFILE IMAGE (Current User) ================
+  // ✅ ================ UPLOAD PROFILE IMAGE (Cloudinary) ================
   @Post('me/upload-image')
   @UseInterceptors(
     FileInterceptor('image', {
-      storage: diskStorage({
-        destination: './uploads/profiles',
-        filename: (req, file, cb) => {
-          const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
-          const ext = extname(file.originalname);
-          cb(null, `profile-${uniqueSuffix}${ext}`);
-        },
-      }),
+      storage: memoryStorage(), // ✅ استخدام memory بدلاً من disk
       limits: {
         fileSize: 2 * 1024 * 1024, // 2MB
       },
@@ -95,28 +87,22 @@ export class UserController {
     if (!file) {
       throw new BadRequestException('لم يتم رفع أي ملف');
     }
-    return this.userService.updateProfileImage(user._id.toString(), file.filename);
+    // ✅ رفع إلى Cloudinary
+    return this.userService.uploadProfileImageToCloudinary(user._id.toString(), file);
   }
 
-  // 🔴 ================ DELETE PROFILE IMAGE (Current User) ================
+  // ✅ ================ DELETE PROFILE IMAGE ================
   @Delete('me/profile-image')
   deleteProfileImage(@CurrentUser() user: User) {
     return this.userService.deleteProfileImage(user._id.toString());
   }
 
-  // 🔴 ================ UPLOAD IMAGE FOR ANY USER (Admin) ================
+  // ✅ ================ UPLOAD IMAGE FOR ANY USER (Admin) ================
   @Post(':id/upload-image')
   @Roles(UserType.ADMIN)
   @UseInterceptors(
     FileInterceptor('image', {
-      storage: diskStorage({
-        destination: './uploads/profiles',
-        filename: (req, file, cb) => {
-          const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
-          const ext = extname(file.originalname);
-          cb(null, `profile-${uniqueSuffix}${ext}`);
-        },
-      }),
+      storage: memoryStorage(), // ✅ استخدام memory
       limits: {
         fileSize: 2 * 1024 * 1024,
       },
@@ -135,7 +121,8 @@ export class UserController {
     if (!file) {
       throw new BadRequestException('لم يتم رفع أي ملف');
     }
-    return this.userService.updateProfileImage(id, file.filename);
+    // ✅ رفع إلى Cloudinary
+    return this.userService.uploadProfileImageToCloudinary(id, file);
   }
 
   // ================ GET USER BY ID (Admin only) ================
